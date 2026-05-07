@@ -47,33 +47,51 @@
   </header>
 
   <main style="padding: 30px; max-width: 1200px; margin: 0 auto; width: 100%; overflow-y: auto;">
-    <div class="card" style="margin-bottom: 20px;">
-      <h2 style="margin-bottom: 15px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
-        Filtros de Grupo
-      </h2>
-      <select id="filtro-grupo" onchange="window.renderTeacherDashboard()" style="padding: 10px; border-radius: 6px; background: var(--code-bg); color: var(--text-light); border: 1px solid var(--border-color); font-size: 1rem; cursor: pointer;">
-        <option value="TODOS">Todos los grupos</option>
-        <option value="10A">Grado 10A</option>
-        <option value="10B">Grado 10B</option>
-        <option value="11A">Grado 11A</option>
-        <option value="11B">Grado 11B</option>
-      </select>
+    
+    <div class="modal-tabs" id="teacher-tabs" style="display: none;">
+      <button class="tab-btn active" id="btn-tab-estudiantes" onclick="window.cambiarTabDocente('estudiantes')"><i data-lucide="users"></i> Panel de Estudiantes</button>
+      <button class="tab-btn" id="btn-tab-gestion" onclick="window.cambiarTabDocente('gestion-docentes')"><i data-lucide="user-cog"></i> Gestionar Docentes</button>
     </div>
 
-    <div class="card" style="overflow-x: auto;">
-      <table class="teacher-table">
-        <thead>
-          <tr>
-            <th>Estudiante</th>
-            <th>Grupo</th>
-            <th>Progreso Global</th>
-            <th>Monedas 🪙</th>
-            <th>Nota Calculada</th>
-          </tr>
-        </thead>
-        <tbody id="teacher-tbody">
-          </tbody>
-      </table>
+    <div id="tab-estudiantes" style="display: block;">
+      <div class="card" style="margin-bottom: 20px;">
+        <h2 style="margin-bottom: 15px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">Filtros de Grupo</h2>
+        <select id="filtro-grupo" onchange="window.renderTeacherDashboard()" style="padding: 10px; border-radius: 6px; background: var(--code-bg); color: var(--text-light); border: 1px solid var(--border-color); font-size: 1rem; cursor: pointer;">
+          <option value="TODOS">Todos los grupos</option>
+          <option value="10A">Grado 10A</option>
+          <option value="10B">Grado 10B</option>
+          <option value="11A">Grado 11A</option>
+          <option value="11B">Grado 11B</option>
+        </select>
+        
+        <div id="teacher-secondary-controls" class="teacher-secondary-controls">
+          <h3 style="color: var(--wokwi-blue);">Bienvenido, <span id="docente-name"></span></h3>
+          <div class="management-container">
+            <input type="text" id="new-group-name" placeholder="Ej: 10A, 11B...">
+            <button onclick="window.addMyGroup()"><i data-lucide="plus"></i> Añadir Grupo</button>
+          </div>
+          <div id="my-groups-list" class="docentes-list"></div>
+        </div>
+      </div>
+
+      <div class="card" style="overflow-x: auto;">
+        <table class="teacher-table">
+          <thead><tr><th>Estudiante</th><th>Grupo</th><th>Progreso Global</th><th>Monedas 🪙</th><th>Nota Calculada</th></tr></thead>
+          <tbody id="teacher-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-gestion-docentes" style="display: none;">
+      <div class="card">
+        <h2><i data-lucide="user-plus"></i> Añadir o Quitar Docentes Secundarios</h2>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 15px;">Los correos añadidos aquí tendrán acceso al panel de docente para gestionar sus propios grupos.</p>
+        <div class="management-container">
+          <input type="email" id="new-docente-email" placeholder="correo@itspereira.edu.co">
+          <button onclick="window.addDocente()"><i data-lucide="plus"></i> Añadir Docente</button>
+        </div>
+        <div id="docentes-list" class="docentes-list"></div>
+      </div>
     </div>
   </main>
 </div>

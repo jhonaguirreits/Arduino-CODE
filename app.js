@@ -4,7 +4,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
 import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-analytics.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-import { getFirestore, doc, setDoc, getDoc, collection, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { getFirestore, doc, setDoc, getDoc, collection, getDocs, query, orderBy, limit, where } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
 // ==============================================================
 // 2. CONFIGURACIÓN EXACTA DE TU FIREBASE (CodeQuestPro)
@@ -27,6 +27,8 @@ const provider = new GoogleAuthProvider();
 
 // LA LLAVE MAESTRA DEL DOCENTE
 const ADMIN_EMAIL = 'jhon.aguirre@itspereira.edu.co';
+let esAdmin = false; // Variable para identificar al admin principal
+let esDocenteSecundario = false; // Variable para docentes no-admin
 
 // ==============================================================
 // 3. BASE DE DATOS DE CONTENIDO (Las 10 Semanas)
@@ -257,11 +259,26 @@ onAuthStateChanged(auth, async (user) => {
   if (user && user.email.endsWith('@itspereira.edu.co')) {
     document.getElementById('login-loading').style.display = 'block';
 
-    // ROL DOCENTE
+    // ROL ADMIN PRINCIPAL (MODO DIOS)
     if (user.email === ADMIN_EMAIL) {
+      esAdmin = true;
       currentUser = user;
+      // Por defecto, el admin entra como estudiante para ver el juego
+      iniciarAppEstudiante();
+      return;
+    }
+
+    // VERIFICAR SI ES DOCENTE SECUNDARIO
+    const rolesDoc = await getDoc(doc(db, "config", "roles"));
+    if (rolesDoc.exists() && rolesDoc.data().docentes.includes(user.email)) {
+      esDocenteSecundario = true;
+      currentUser = user;
+      // Los docentes secundarios van directo a su panel
       window.iniciarAppDocente();
       return;
+    } else if (rolesDoc.exists() && !rolesDoc.data().docentes.includes(user.email) && user.email !== ADMIN_EMAIL) {
+        // Si existe el doc de roles pero el email no está, no es ni admin ni docente.
+        // Podría ser un estudiante con correo de docente, lo dejamos pasar.
     }
 
     // ROL ESTUDIANTE
@@ -323,7 +340,7 @@ window.loginConGoogle = async function() {
 
 window.logout = async function() {
   if(confirm("¿Deseas cerrar sesión? Tus datos están guardados en la Nube ☁️.")) {
-    if (currentUser && currentUser.email !== ADMIN_EMAIL) await saveToFirebase(); 
+    if (currentUser && !esAdmin && !esDocenteSecundario) await saveToFirebase(); 
     await signOut(auth);
     window.location.reload(); 
   }
@@ -331,7 +348,7 @@ window.logout = async function() {
 
 async function saveToFirebase() {
   if(!currentUser || currentUser.email === ADMIN_EMAIL) return;
-  try { await setDoc(doc(db, "users", currentUser.uid), userData, { merge: true }); } 
+  try { await setDoc(doc(db, "users", currentUser.uid), userData, { merge: true }); }
   catch (e) { console.error("Error guardando en la nube:", e); }
 }
 
@@ -348,7 +365,18 @@ window.iniciarAppDocente = async function() {
   document.getElementById('screen-login').classList.remove('active');
   document.getElementById('screen-app').classList.remove('active');
   document.getElementById('screen-teacher').classList.add('active');
-  
+
+  // El admin principal ve la pestaña de gestión de docentes
+  if (esAdmin) {
+    document.getElementById('teacher-tabs').style.display = 'flex';
+    await window.renderTeacherManagementUI();
+  } else if (esDocenteSecundario) {
+    // Los docentes secundarios ven su propia UI de gestión de grupos
+    document.getElementById('teacher-tabs').style.display = 'none';
+    document.getElementById('filtro-grupo').style.display = 'none'; // Ocultamos el filtro global
+    document.getElementById('teacher-secondary-controls').style.display = 'block';
+    await window.renderSecondaryTeacherUI();
+  }
   await window.renderTeacherDashboard();
 }
 
@@ -357,24 +385,40 @@ window.renderTeacherDashboard = async function() {
   tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;"><i data-lucide="loader-2" class="lucide-spin"></i> Cargando estudiantes desde Firebase...</td></tr>`;
   if (window.lucide) lucide.createIcons();
 
+  let filtroGrupos = [];
+  // El admin ve todos los grupos o el que filtre
+  if (esAdmin) {
+      const filtroSeleccionado = document.getElementById('filtro-grupo').value;
+      if (filtroSeleccionado !== "TODOS") {
+          filtroGrupos.push(filtroSeleccionado);
+      }
+  }
+  // El docente secundario solo ve los grupos que tiene asignados
+  if (esDocenteSecundario) {
+      const rolesDoc = await getDoc(doc(db, "config", "roles"));
+      if (rolesDoc.exists()) {
+          const docenteData = rolesDoc.data().gruposPorDocente?.[currentUser.email];
+          if (docenteData) filtroGrupos = docenteData;
+      }
+  }
+
   try {
-      const q = query(collection(db, "users"));
+      // Si hay filtros de grupo, los aplicamos a la consulta
+      const q = filtroGrupos.length > 0 
+          ? query(collection(db, "users"), where("grado", "in", filtroGrupos))
+          : query(collection(db, "users"));
+
       const querySnapshot = await getDocs(q);
       allStudentsData = [];
       querySnapshot.forEach((docSnap) => {
-          allStudentsData.push(docSnap.data());
-      });
-
-      const filtro = document.getElementById('filtro-grupo').value;
-      const estudiantesFiltrados = allStudentsData.filter(est => {
-          if(est.email === ADMIN_EMAIL) return false;
-          return filtro === "TODOS" || est.grado === filtro;
+          const data = docSnap.data();
+          if(data.email !== ADMIN_EMAIL) allStudentsData.push(data);
       });
 
       tbody.innerHTML = '';
       const totalRetos = Object.keys(weeks).length * 3;
-
-      estudiantesFiltrados.forEach(est => {
+      
+      allStudentsData.forEach(est => {
           let completados = 0;
           if(est.progress) { Object.values(est.progress).forEach(val => { if(val===true) completados++; }); }
           
@@ -397,8 +441,8 @@ window.renderTeacherDashboard = async function() {
           `;
       });
       
-      if (estudiantesFiltrados.length === 0) {
-          tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No hay estudiantes registrados en este grupo.</td></tr>`;
+      if (allStudentsData.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No hay estudiantes para los grupos seleccionados.</td></tr>`;
       }
       if (window.lucide) lucide.createIcons();
   } catch(e) {
@@ -449,6 +493,7 @@ function iniciarAppEstudiante() {
   document.getElementById('screen-teacher').classList.remove('active');
   document.getElementById('screen-app').classList.add('active');
   
+  // Aplicar tema y avatar (si el admin tiene datos de estudiante)
   aplicarTemaYAvatarUI();
 
   const headerButtons = document.getElementById('header-buttons');
@@ -456,7 +501,14 @@ function iniciarAppEstudiante() {
     const badge = document.createElement('div'); 
     badge.id = 'header-user-badge';
     badge.className = 'user-badge flex-icon';
-    badge.innerHTML = `<i id="header-avatar" data-lucide="${userData.avatar}"></i> <span>${userData.nombres.split(' ')[0]}</span> <button class="btn-logout flex-icon" onclick="window.logout()" title="Cerrar Sesión"><i data-lucide="log-out"></i> Salir</button>`;
+    
+    // Si es el admin principal, añadir el botón de "Modo Dios"
+    const adminButton = esAdmin 
+      ? `<button class="btn-admin-mode flex-icon" onclick="window.iniciarAppDocente()" title="Modo Dios"><i data-lucide="crown"></i> Admin</button>` 
+      : '';
+
+    badge.innerHTML = `<i id="header-avatar" data-lucide="${userData.avatar || 'user'}"></i> <span>${(userData.nombres || 'Admin').split(' ')[0]}</span> ${adminButton} <button class="btn-logout flex-icon" onclick="window.logout()" title="Cerrar Sesión"><i data-lucide="log-out"></i> Salir</button>`;
+    
     headerButtons.appendChild(badge);
   }
 
@@ -467,11 +519,11 @@ function iniciarAppEstudiante() {
 }
 
 function aplicarTemaYAvatarUI() {
-  const themeObj = tiendaItems.themes.find(t => t.id === userData.theme) || tiendaItems.themes[0];
+  const themeObj = tiendaItems.themes.find(t => t.id === (userData.theme || 'blue')) || tiendaItems.themes[0];
   document.documentElement.style.setProperty('--wokwi-blue', themeObj.color);
   
   const iconEl = document.getElementById('header-avatar');
-  if(iconEl) { iconEl.setAttribute('data-lucide', userData.avatar); if (window.lucide) lucide.createIcons(); }
+  if(iconEl) { iconEl.setAttribute('data-lucide', userData.avatar || 'user'); if (window.lucide) lucide.createIcons(); }
 
   if(userData.themeMode === 'light') {
     document.body.setAttribute('data-theme', 'light');
@@ -485,6 +537,117 @@ function aplicarTemaYAvatarUI() {
 window.toggleTheme = function() {
   userData.themeMode = userData.themeMode === 'light' ? 'dark' : 'light';
   saveToFirebase(); aplicarTemaYAvatarUI();
+}
+
+// ==============================================================
+// 9. GESTIÓN DE DOCENTES (MODO DIOS)
+// ==============================================================
+
+window.cambiarTabDocente = function(tab) {
+  document.getElementById('tab-estudiantes').style.display = 'none';
+  document.getElementById('tab-gestion-docentes').style.display = 'none';
+  document.getElementById('btn-tab-estudiantes').classList.remove('active');
+  document.getElementById('btn-tab-gestion').classList.remove('active');
+
+  document.getElementById(`tab-${tab}`).style.display = 'block';
+  document.getElementById(`btn-tab-${tab === 'estudiantes' ? 'estudiantes' : 'gestion'}`).classList.add('active');
+  if (window.lucide) lucide.createIcons();
+}
+
+async function getRoles() {
+    const rolesDoc = await getDoc(doc(db, "config", "roles"));
+    if (rolesDoc.exists()) {
+        return rolesDoc.data();
+    }
+    // Si no existe, lo creamos con valores por defecto
+    const defaultRoles = { docentes: [], gruposPorDocente: {} };
+    await setDoc(doc(db, "config", "roles"), defaultRoles);
+    return defaultRoles;
+}
+
+window.renderTeacherManagementUI = async function() {
+    const roles = await getRoles();
+    const container = document.getElementById('docentes-list');
+    container.innerHTML = roles.docentes.map(email => `
+        <div class="docente-item">
+            <span>${email}</span>
+            <button class="btn-delete-docente" onclick="window.removeDocente('${email}')"><i data-lucide="trash-2"></i></button>
+        </div>
+    `).join('');
+    if (window.lucide) lucide.createIcons();
+}
+
+window.addDocente = async function() {
+    const input = document.getElementById('new-docente-email');
+    const email = input.value.trim().toLowerCase();
+    if (email && email.endsWith('@itspereira.edu.co')) {
+        const roles = await getRoles();
+        if (!roles.docentes.includes(email)) {
+            roles.docentes.push(email);
+            await setDoc(doc(db, "config", "roles"), roles, { merge: true });
+            input.value = '';
+            await renderTeacherManagementUI();
+        } else {
+            alert('Este docente ya existe en la lista.');
+        }
+    } else {
+        alert('Por favor, ingresa un correo institucional válido.');
+    }
+}
+
+window.removeDocente = async function(email) {
+    if (confirm(`¿Seguro que deseas eliminar al docente ${email}? También se eliminarán sus grupos asignados.`)) {
+        const roles = await getRoles();
+        roles.docentes = roles.docentes.filter(d => d !== email);
+        delete roles.gruposPorDocente[email]; // Elimina los grupos asociados
+        await setDoc(doc(db, "config", "roles"), roles);
+        await renderTeacherManagementUI();
+    }
+}
+
+// --- Funciones para Docentes Secundarios ---
+
+window.renderSecondaryTeacherUI = async function() {
+    const roles = await getRoles();
+    const misGrupos = roles.gruposPorDocente?.[currentUser.email] || [];
+    const container = document.getElementById('my-groups-list');
+    
+    document.getElementById('docente-name').textContent = currentUser.displayName || currentUser.email;
+
+    container.innerHTML = misGrupos.map(grupo => `
+        <div class="docente-item">
+            <span>${grupo}</span>
+            <button class="btn-delete-docente" onclick="window.removeMyGroup('${grupo}')"><i data-lucide="trash-2"></i></button>
+        </div>
+    `).join('');
+    if (window.lucide) lucide.createIcons();
+    await window.renderTeacherDashboard(); // Actualizamos la tabla de estudiantes
+}
+
+window.addMyGroup = async function() {
+    const input = document.getElementById('new-group-name');
+    const grupo = input.value.trim().toUpperCase();
+    if (grupo) {
+        const roles = await getRoles();
+        if (!roles.gruposPorDocente[currentUser.email]) {
+            roles.gruposPorDocente[currentUser.email] = [];
+        }
+        if (!roles.gruposPorDocente[currentUser.email].includes(grupo)) {
+            roles.gruposPorDocente[currentUser.email].push(grupo);
+            await setDoc(doc(db, "config", "roles"), roles, { merge: true });
+            input.value = '';
+            await renderSecondaryTeacherUI();
+        } else {
+            alert('Ya tienes este grupo asignado.');
+        }
+    }
+}
+
+window.removeMyGroup = async function(grupo) {
+    const roles = await getRoles();
+    roles.gruposPorDocente[currentUser.email] = roles.gruposPorDocente[currentUser.email].filter(g => g !== grupo);
+    await setDoc(doc(db, "config", "roles"), roles, { merge: true });
+    await renderSecondaryTeacherUI();
 }
 
 // ==============================================================
