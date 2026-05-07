@@ -31,6 +31,53 @@
   </div>
 </div>
 
+<div id="screen-teacher" class="screen">
+  <header style="justify-content: space-between;">
+    <div class="header-title flex-icon" style="color: var(--warning-color);">
+      <i data-lucide="shield-alert"></i> Panel del Docente (Admin)
+    </div>
+    <div style="display: flex; gap: 15px;">
+      <button onclick="window.exportarCSV()" class="export-btn flex-icon" style="background-color: var(--accent); color:white; border:none;">
+        <i data-lucide="download"></i> Exportar Notas (.csv)
+      </button>
+      <button onclick="window.logout()" class="export-btn flex-icon" style="background-color: var(--error-color); color:white; border:none;">
+        <i data-lucide="log-out"></i> Salir
+      </button>
+    </div>
+  </header>
+
+  <main style="padding: 30px; max-width: 1200px; margin: 0 auto; width: 100%; overflow-y: auto;">
+    <div class="card" style="margin-bottom: 20px;">
+      <h2 style="margin-bottom: 15px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
+        Filtros de Grupo
+      </h2>
+      <select id="filtro-grupo" onchange="window.renderTeacherDashboard()" style="padding: 10px; border-radius: 6px; background: var(--code-bg); color: var(--text-light); border: 1px solid var(--border-color); font-size: 1rem; cursor: pointer;">
+        <option value="TODOS">Todos los grupos</option>
+        <option value="10A">Grado 10A</option>
+        <option value="10B">Grado 10B</option>
+        <option value="11A">Grado 11A</option>
+        <option value="11B">Grado 11B</option>
+      </select>
+    </div>
+
+    <div class="card" style="overflow-x: auto;">
+      <table class="teacher-table">
+        <thead>
+          <tr>
+            <th>Estudiante</th>
+            <th>Grupo</th>
+            <th>Progreso Global</th>
+            <th>Monedas 🪙</th>
+            <th>Nota Calculada</th>
+          </tr>
+        </thead>
+        <tbody id="teacher-tbody">
+          </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
 <div id="screen-app" class="screen">
 <header>
   <div class="header-top">

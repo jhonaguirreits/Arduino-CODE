@@ -25,6 +25,9 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const provider = new GoogleAuthProvider();
 
+// LA LLAVE MAESTRA DEL DOCENTE
+const ADMIN_EMAIL = 'jhon.aguirre@itspereira.edu.co';
+
 // ==============================================================
 // 3. BASE DE DATOS DE CONTENIDO (Las 10 Semanas)
 // ==============================================================
@@ -237,6 +240,8 @@ let fallos = { basico: 0, alto: 0, superior: 0 };
 let pistasDesbloqueadas = { basico: 0, alto: 0, superior: 0 };
 let vidas = { basico: 3, alto: 3, superior: 3 };
 
+let allStudentsData = []; // Para el panel de administrador
+
 let userData = {
   nombres: "", email: "", grado: "",
   volts: 0, monedas: 0, streak: 0, lastLogin: "",
@@ -245,61 +250,23 @@ let userData = {
 };
 
 // ==============================================================
-// 6. AUTENTICACIÓN Y CONEXIÓN A FIRESTORE
+// 6. AUTENTICACIÓN Y PANEL DOCENTE
 // ==============================================================
 
-// Verificador automático de sesión
 onAuthStateChanged(auth, async (user) => {
   if (user && user.email.endsWith('@itspereira.edu.co')) {
     document.getElementById('login-loading').style.display = 'block';
-    const docRef = doc(db, "users", user.uid);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-      userData = docSnap.data(); 
-      if(!userData.savedCodes) userData.savedCodes = {};
-      if(!userData.drafts) userData.drafts = {};
-      if(!userData.teoria) userData.teoria = {};
-      if(!userData.themeMode) userData.themeMode = 'dark';
-      if(!userData.inventory) {
-        userData.avatar = "user"; userData.theme = "blue";
-        userData.inventory = { avatars: ["user"], themes: ["blue"] };
-      }
-    } else {
-      userData = {
-        nombres: user.displayName, email: user.email, grado: "Sin Grado",
-        volts: 0, monedas: 0, streak: 0, lastLogin: "",
-        progress: {}, records: {}, savedCodes: {}, drafts: {}, teoria: {},
-        avatar: "user", theme: "blue", themeMode: "dark", inventory: { avatars: ["user"], themes: ["blue"] }
-      };
-      await saveToFirebase();
-    }
-    currentUser = user;
-    iniciarApp();
-  } else {
-    document.getElementById('screen-login').classList.add('active');
-    document.getElementById('screen-app').classList.remove('active');
-    if (window.lucide) lucide.createIcons();
-  }
-});
 
-window.loginConGoogle = async function() {
-  try {
-    const result = await signInWithPopup(auth, provider);
-    const user = result.user;
-
-    if(!user.email.endsWith('@itspereira.edu.co')) {
-      await signOut(auth);
-      document.getElementById('login-error').style.display = 'block';
-      document.getElementById('login-error').textContent = 'Acceso denegado. Usa tu cuenta @itspereira.edu.co';
+    // ROL DOCENTE
+    if (user.email === ADMIN_EMAIL) {
+      currentUser = user;
+      window.iniciarAppDocente();
       return;
     }
 
-    document.getElementById('login-error').style.display = 'none';
-    document.getElementById('login-loading').style.display = 'block';
-
+    // ROL ESTUDIANTE
     const docRef = doc(db, "users", user.uid);
     const docSnap = await getDoc(docRef);
-
     if (docSnap.exists()) {
       userData = docSnap.data(); 
       if(!userData.savedCodes) userData.savedCodes = {};
@@ -320,26 +287,50 @@ window.loginConGoogle = async function() {
       };
       await saveToFirebase();
     }
-
     currentUser = user;
-    iniciarApp();
+    iniciarAppEstudiante();
+  } else {
+    document.getElementById('screen-login').classList.add('active');
+    document.getElementById('screen-app').classList.remove('active');
+    document.getElementById('screen-teacher').classList.remove('active');
+    if (window.lucide) lucide.createIcons();
+  }
+});
+
+window.loginConGoogle = async function() {
+  try {
+    const result = await signInWithPopup(auth, provider);
+    const user = result.user;
+
+    if(!user.email.endsWith('@itspereira.edu.co')) {
+      await signOut(auth);
+      document.getElementById('login-error').style.display = 'block';
+      document.getElementById('login-error').textContent = 'Acceso denegado. Usa tu cuenta @itspereira.edu.co';
+      return;
+    }
+
+    document.getElementById('login-error').style.display = 'none';
+    document.getElementById('login-loading').style.display = 'block';
+
+    // Se maneja el resto en onAuthStateChanged
   } catch (error) {
     console.error("Error en Login:", error);
     document.getElementById('login-error').style.display = 'block';
     document.getElementById('login-error').textContent = 'Error de conexión. Intenta nuevamente.';
+    document.getElementById('login-loading').style.display = 'none';
   }
 };
 
 window.logout = async function() {
-  if(confirm("Tus datos están a salvo en la Nube ☁️. ¿Deseas cerrar sesión?")) {
-    await saveToFirebase(); 
+  if(confirm("¿Deseas cerrar sesión? Tus datos están guardados en la Nube ☁️.")) {
+    if (currentUser && currentUser.email !== ADMIN_EMAIL) await saveToFirebase(); 
     await signOut(auth);
     window.location.reload(); 
   }
 };
 
 async function saveToFirebase() {
-  if(!currentUser) return;
+  if(!currentUser || currentUser.email === ADMIN_EMAIL) return;
   try { await setDoc(doc(db, "users", currentUser.uid), userData, { merge: true }); } 
   catch (e) { console.error("Error guardando en la nube:", e); }
 }
@@ -351,10 +342,111 @@ function autoGuardarEnNube() {
 }
 
 // ==============================================================
-// 7. FLUJO DE LA APP Y PERSONALIZACIÓN (Manejo de Tema/Avatar)
+// 7. INICIO APP DOCENTE Y DASHBOARD
 // ==============================================================
-function iniciarApp() {
+window.iniciarAppDocente = async function() {
   document.getElementById('screen-login').classList.remove('active');
+  document.getElementById('screen-app').classList.remove('active');
+  document.getElementById('screen-teacher').classList.add('active');
+  
+  await window.renderTeacherDashboard();
+}
+
+window.renderTeacherDashboard = async function() {
+  const tbody = document.getElementById('teacher-tbody');
+  tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;"><i data-lucide="loader-2" class="lucide-spin"></i> Cargando estudiantes desde Firebase...</td></tr>`;
+  if (window.lucide) lucide.createIcons();
+
+  try {
+      const q = query(collection(db, "users"));
+      const querySnapshot = await getDocs(q);
+      allStudentsData = [];
+      querySnapshot.forEach((docSnap) => {
+          allStudentsData.push(docSnap.data());
+      });
+
+      const filtro = document.getElementById('filtro-grupo').value;
+      const estudiantesFiltrados = allStudentsData.filter(est => {
+          if(est.email === ADMIN_EMAIL) return false;
+          return filtro === "TODOS" || est.grado === filtro;
+      });
+
+      tbody.innerHTML = '';
+      const totalRetos = Object.keys(weeks).length * 3;
+
+      estudiantesFiltrados.forEach(est => {
+          let completados = 0;
+          if(est.progress) { Object.values(est.progress).forEach(val => { if(val===true) completados++; }); }
+          
+          const porcentaje = (completados / totalRetos) * 100;
+          const notaFinal = ((porcentaje / 100) * 4.0) + 1.0; 
+
+          tbody.innerHTML += `
+            <tr>
+              <td><strong>${est.nombres || 'Sin nombre'}</strong><br><small style="color:var(--text-muted)">${est.email}</small></td>
+              <td>${est.grado || 'N/A'}</td>
+              <td>
+                ${Math.round(porcentaje)}% (${completados}/${totalRetos})
+                <div class="progress-bar-container">
+                  <div class="progress-bar-fill" style="width: ${porcentaje}%"></div>
+                </div>
+              </td>
+              <td style="color:#e3b341; font-weight:bold;">🪙 ${est.monedas || 0}</td>
+              <td><strong style="color: ${notaFinal >= 3.0 ? 'var(--accent)' : 'var(--error-color)'}; font-size: 1.1em;">${notaFinal.toFixed(1)}</strong></td>
+            </tr>
+          `;
+      });
+      
+      if (estudiantesFiltrados.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No hay estudiantes registrados en este grupo.</td></tr>`;
+      }
+      if (window.lucide) lucide.createIcons();
+  } catch(e) {
+      console.error("Error al cargar dashboard", e);
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--error-color);">Error cargando datos de Firebase.</td></tr>`;
+  }
+}
+
+window.exportarCSV = function() {
+  let csvContent = "\uFEFFNombre,Correo,Grupo,Retos Completados,Porcentaje,Monedas,Nota Final (1.0 - 5.0)\n";
+  const filtro = document.getElementById('filtro-grupo').value;
+  const totalRetos = Object.keys(weeks).length * 3;
+
+  const estudiantesFiltrados = allStudentsData.filter(est => {
+      if(est.email === ADMIN_EMAIL) return false;
+      return filtro === "TODOS" || est.grado === filtro;
+  });
+
+  if (estudiantesFiltrados.length === 0) return alert("No hay datos para exportar.");
+
+  estudiantesFiltrados.forEach(est => {
+      let completados = 0;
+      if(est.progress) { Object.values(est.progress).forEach(val => { if(val===true) completados++; }); }
+      
+      const porcentaje = (completados / totalRetos) * 100;
+      const notaFinal = ((porcentaje / 100) * 4.0) + 1.0;
+      
+      const fila = `"${est.nombres || ''}","${est.email}","${est.grado || ''}","${completados}/${totalRetos}","${porcentaje.toFixed(1)}%","${est.monedas || 0}","${notaFinal.toFixed(1)}"`;
+      csvContent += fila + "\n";
+  });
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  link.setAttribute("href", url);
+  link.setAttribute("download", `Planilla_Notas_Wokwi_${filtro}_${new Date().toISOString().split('T')[0]}.csv`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+// ==============================================================
+// 8. INICIO APP ESTUDIANTE Y PERSONALIZACIÓN UI
+// ==============================================================
+function iniciarAppEstudiante() {
+  document.getElementById('screen-login').classList.remove('active');
+  document.getElementById('screen-teacher').classList.remove('active');
   document.getElementById('screen-app').classList.add('active');
   
   aplicarTemaYAvatarUI();
@@ -379,12 +471,8 @@ function aplicarTemaYAvatarUI() {
   document.documentElement.style.setProperty('--wokwi-blue', themeObj.color);
   
   const iconEl = document.getElementById('header-avatar');
-  if(iconEl) {
-    iconEl.setAttribute('data-lucide', userData.avatar);
-    if (window.lucide) lucide.createIcons();
-  }
+  if(iconEl) { iconEl.setAttribute('data-lucide', userData.avatar); if (window.lucide) lucide.createIcons(); }
 
-  // MODO CLARO / OSCURO
   if(userData.themeMode === 'light') {
     document.body.setAttribute('data-theme', 'light');
     document.getElementById('btn-theme').innerHTML = `<i data-lucide="moon"></i> Tema Oscuro`;
@@ -396,30 +484,22 @@ function aplicarTemaYAvatarUI() {
 
 window.toggleTheme = function() {
   userData.themeMode = userData.themeMode === 'light' ? 'dark' : 'light';
-  saveToFirebase();
-  aplicarTemaYAvatarUI();
+  saveToFirebase(); aplicarTemaYAvatarUI();
 }
 
 // ==============================================================
-// 8. MODAL DE GAMIFICACIÓN: RANKING Y TIENDA
+// 9. MODAL DE GAMIFICACIÓN: RANKING Y TIENDA
 // ==============================================================
 window.abrirModalGamificacion = function() {
   document.getElementById('modal-gamificacion').style.display = 'flex';
   window.cambiarTabGamificacion('ranking');
 }
-
-window.cerrarModalGamificacion = function() {
-  document.getElementById('modal-gamificacion').style.display = 'none';
-}
+window.cerrarModalGamificacion = function() { document.getElementById('modal-gamificacion').style.display = 'none'; }
 
 window.cambiarTabGamificacion = function(tab) {
-  document.getElementById('btn-tab-ranking').classList.remove('active');
-  document.getElementById('btn-tab-tienda').classList.remove('active');
-  document.getElementById('tab-ranking').style.display = 'none';
-  document.getElementById('tab-tienda').style.display = 'none';
-  
-  document.getElementById(`btn-tab-${tab}`).classList.add('active');
-  document.getElementById(`tab-${tab}`).style.display = 'block';
+  document.getElementById('btn-tab-ranking').classList.remove('active'); document.getElementById('btn-tab-tienda').classList.remove('active');
+  document.getElementById('tab-ranking').style.display = 'none'; document.getElementById('tab-tienda').style.display = 'none';
+  document.getElementById(`btn-tab-${tab}`).classList.add('active'); document.getElementById(`tab-${tab}`).style.display = 'block';
 
   if (tab === 'ranking') cargarRankingNube();
   if (tab === 'tienda') renderTiendaUI();
@@ -437,6 +517,8 @@ async function cargarRankingNube() {
     let html = ''; let rank = 1;
     querySnapshot.forEach((docSnap) => {
       let d = docSnap.data();
+      if(d.email === ADMIN_EMAIL) return; // Omitir al profesor del ranking
+
       let iconColor = rank === 1 ? '#fbbf24' : (rank === 2 ? '#94a3b8' : (rank === 3 ? '#b45309' : 'var(--text-light)'));
       let badge = rank === 1 ? '👑' : `#${rank}`;
       
@@ -453,7 +535,6 @@ async function cargarRankingNube() {
     if(html === '') html = `<tr><td colspan="5" style="text-align:center;">No hay datos suficientes aún.</td></tr>`;
     tbody.innerHTML = html;
     if (window.lucide) lucide.createIcons();
-
   } catch (error) {
     console.error("Error cargando ranking", error);
     tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--error-color);">Error de conexión al cargar Ranking.</td></tr>`;
@@ -463,7 +544,6 @@ async function cargarRankingNube() {
 function renderTiendaUI() {
   document.getElementById('tienda-user-monedas').innerText = userData.monedas;
 
-  // Avatares
   const avContainer = document.getElementById('store-avatars');
   avContainer.innerHTML = tiendaItems.avatars.map(item => {
     let isOwned = userData.inventory.avatars.includes(item.id);
@@ -479,7 +559,6 @@ function renderTiendaUI() {
     </div>`;
   }).join('');
 
-  // Temas
   const thContainer = document.getElementById('store-themes');
   thContainer.innerHTML = tiendaItems.themes.map(item => {
     let isOwned = userData.inventory.themes.includes(item.id);
@@ -522,7 +601,7 @@ window.equiparArticulo = function(tipo, id) {
 }
 
 // ==============================================================
-// 9. FUNCIONES GAMIFICACIÓN LOCAL (Pistas, Vida, Teoría)
+// 10. FUNCIONES GAMIFICACIÓN LOCAL (Pistas, Vida, Teoría)
 // ==============================================================
 function cargarDatosGamificacion() {
   document.getElementById('stats-panel').style.display = 'flex';
@@ -578,7 +657,7 @@ function renderPistas(nivel, reto) {
 }
 
 // ==============================================================
-// 10. MOTOR DE EVALUACIÓN Y BOTÓN LLEVAR AL SIMULADOR
+// 11. MOTOR EVALUADOR Y SIMULADOR
 // ==============================================================
 window.llevarAlSimulador = function(nivel) {
   const txt = document.getElementById(`input-${nivel}`).value;
@@ -590,10 +669,7 @@ window.llevarAlSimulador = function(nivel) {
     setTimeout(() => iframe.classList.remove('iframe-highlight'), 3000);
 
     const fb = document.getElementById(`feedback-${nivel}`);
-    fb.className = "feedback success"; 
-    fb.style.borderColor = "var(--wokwi-blue)";
-    fb.style.backgroundColor = "rgba(47, 129, 247, 0.1)";
-    fb.style.display = "block";
+    fb.className = "feedback success"; fb.style.borderColor = "var(--wokwi-blue)"; fb.style.backgroundColor = "rgba(47, 129, 247, 0.1)"; fb.style.display = "block";
     fb.innerHTML = `<div class="flex-icon"><i data-lucide="copy-check"></i> ¡Código Copiado! Haz clic dentro del Simulador y presiona Ctrl + V</div>`;
     if (window.lucide) lucide.createIcons();
   });
@@ -602,13 +678,11 @@ window.llevarAlSimulador = function(nivel) {
 function limpiarCodigo(codigoRaw) { return codigoRaw.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ''); }
 
 function linterDidactico(codigoLimpio) {
-  let errores = [];
-  let llaves = 0, parentesis = 0;
+  let errores = []; let llaves = 0, parentesis = 0;
   for (let char of codigoLimpio) {
     if (char === '{') llaves++; if (char === '}') llaves--;
     if (char === '(') parentesis++; if (char === ')') parentesis--;
   }
-  
   if (llaves !== 0) errores.push("⚖️ <strong>¡Desbalance de llaves {}!</strong> Todo bloque que abres debes cerrarlo.");
   if (parentesis !== 0) errores.push("⚖️ <strong>¡Paréntesis huérfano ()!</strong> Revisa las condiciones, te falta cerrar un paréntesis.");
 
@@ -709,7 +783,7 @@ window.verifyCode = function(nivel) {
 }
 
 // ==============================================================
-// 11. RENDERIZADO DE LAS SEMANAS Y EL EDITOR
+// 12. RENDERIZADO DE LAS SEMANAS Y EL EDITOR
 // ==============================================================
 window.loadWeek = function() {
   currentRetoId = document.getElementById('week-select').value;
@@ -776,11 +850,20 @@ window.resetProgress = function() {
 }
 
 // ==============================================================
-// 12. FUNCIONES EXTRA (Exportar PDF y Diploma)
+// 13. FUNCIONES AUXILIARES (Utilidades)
 // ==============================================================
 window.copyCode = function() { navigator.clipboard.writeText(document.getElementById('w-code').textContent).then(() => { const btn = document.getElementById('btnCopy'); const orig = btn.innerHTML; btn.innerHTML = `<i data-lucide="check"></i> Copiado`; lucide.createIcons(); setTimeout(() => { btn.innerHTML = orig; lucide.createIcons(); }, 2000); }); }
+function formatTime(sec) { return `${Math.floor(sec/60).toString().padStart(2,'0')}:${(sec%60).toString().padStart(2,'0')}`; }
+function iniciarTimerSiNecesario(nivel) { if (!intervalos[nivel] && vidas[nivel] > 0) { timers[nivel] = 0; document.getElementById(`timer-${nivel}`).textContent = `⏱ 00:00`; intervalos[nivel] = setInterval(() => { timers[nivel]++; document.getElementById(`timer-${nivel}`).textContent = `⏱ ${formatTime(timers[nivel])}`; }, 1000); } }
+function stopTimer(nivel) { if (intervalos[nivel]) { clearInterval(intervalos[nivel]); intervalos[nivel] = null; } }
+
+function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
+function playCoinSound() { initAudio(); const osc = audioCtx.createOscillator(); const gainNode = audioCtx.createGain(); osc.connect(gainNode); gainNode.connect(audioCtx.destination); osc.type = 'square'; osc.frequency.setValueAtTime(987.77, audioCtx.currentTime); osc.frequency.setValueAtTime(1318.51, audioCtx.currentTime + 0.1); gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime); gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.4); osc.start(audioCtx.currentTime); osc.stop(audioCtx.currentTime + 0.4); }
+function playErrorSound() { initAudio(); const osc = audioCtx.createOscillator(); const gainNode = audioCtx.createGain(); osc.connect(gainNode); gainNode.connect(audioCtx.destination); osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.3); gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime); gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.3); osc.start(audioCtx.currentTime); osc.stop(audioCtx.currentTime + 0.3); }
+function playLifeSound() { initAudio(); const osc = audioCtx.createOscillator(); const gainNode = audioCtx.createGain(); osc.connect(gainNode); gainNode.connect(audioCtx.destination); osc.type = 'sine'; osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); osc.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); osc.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime); gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.5); osc.start(audioCtx.currentTime); osc.stop(audioCtx.currentTime + 0.5); }
+
 function updateProgress() {
-  if (!currentUser) return;
+  if (!currentUser || currentUser.email === ADMIN_EMAIL) return;
   const totalRetos = Object.keys(weeks).length * 3; let completados = 0; const container = document.getElementById('progreso-semanas'); container.innerHTML = '';
   Object.keys(weeks).forEach(sem => {
     let semCompletados = 0;
@@ -834,3 +917,10 @@ window.descargarDiploma = function() {
     btn.innerHTML = originalHTML; lucide.createIcons(); confetti(); playCoinSound();
   });
 }
+
+window.onload = () => { 
+  document.getElementById('screen-login').classList.add('active'); 
+  document.getElementById('screen-app').classList.remove('active'); 
+  document.getElementById('screen-teacher').classList.remove('active');
+  if (window.lucide) lucide.createIcons(); 
+};
